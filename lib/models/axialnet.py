@@ -3,17 +3,18 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .utils import *
 import pdb
 import matplotlib.pyplot as plt
  
 import random
 
+class qkv_transform(nn.Conv1d):
+    """Conv1d for qkv_transform"""
 
 
-def conv1x1(in_planes, out_planes, stride=1):
+def conv1x1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
+    return nn.Conv3d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
 
 class AxialAttention(nn.Module):
@@ -266,14 +267,14 @@ class AxialBlock(nn.Module):
                  base_width=64, dilation=1, norm_layer=None, kernel_size=56):
         super(AxialBlock, self).__init__()
         if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
+            norm_layer = nn.BatchNorm3d
         width = int(planes * (base_width / 64.))
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
-        self.conv_down = conv1x1(inplanes, width)
+        self.conv_down = conv1x1x1(inplanes, width)
         self.bn1 = norm_layer(width)
         self.hight_block = AxialAttention(width, width, groups=groups, kernel_size=kernel_size)
         self.width_block = AxialAttention(width, width, groups=groups, kernel_size=kernel_size, stride=stride, width=True)
-        self.conv_up = conv1x1(width, planes * self.expansion)
+        self.conv_up = conv1x1x1(width, planes * self.expansion)
         self.bn2 = norm_layer(planes * self.expansion)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
@@ -311,11 +312,11 @@ class AxialBlock_dynamic(nn.Module):
             norm_layer = nn.BatchNorm2d
         width = int(planes * (base_width / 64.))
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
-        self.conv_down = conv1x1(inplanes, width)
+        self.conv_down = conv1x1x1(inplanes, width)
         self.bn1 = norm_layer(width)
         self.hight_block = AxialAttention_dynamic(width, width, groups=groups, kernel_size=kernel_size)
         self.width_block = AxialAttention_dynamic(width, width, groups=groups, kernel_size=kernel_size, stride=stride, width=True)
-        self.conv_up = conv1x1(width, planes * self.expansion)
+        self.conv_up = conv1x1x1(width, planes * self.expansion)
         self.bn2 = norm_layer(planes * self.expansion)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
@@ -354,12 +355,12 @@ class AxialBlock_wopos(nn.Module):
         # print(kernel_size)
         width = int(planes * (base_width / 64.))
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
-        self.conv_down = conv1x1(inplanes, width)
+        self.conv_down = conv1x1x1(inplanes, width)
         self.conv1 = nn.Conv2d(width, width, kernel_size = 1)
         self.bn1 = norm_layer(width)
         self.hight_block = AxialAttention_wopos(width, width, groups=groups, kernel_size=kernel_size)
         self.width_block = AxialAttention_wopos(width, width, groups=groups, kernel_size=kernel_size, stride=stride, width=True)
-        self.conv_up = conv1x1(width, planes * self.expansion)
+        self.conv_up = conv1x1x1(width, planes * self.expansion)
         self.bn2 = norm_layer(planes * self.expansion)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
@@ -398,10 +399,10 @@ class ResAxialAttentionUNet(nn.Module):
 
     def __init__(self, block, layers, num_classes=2, zero_init_residual=True,
                  groups=8, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None, s=0.125, img_size = 128,imgchan = 3):
+                 norm_layer=None, s=0.125, img_size = 128,imgchan = 1):
         super(ResAxialAttentionUNet, self).__init__()
         if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
+            norm_layer = nn.BatchNorm3d
         self._norm_layer = norm_layer
 
         self.inplanes = int(64 * s)
@@ -413,10 +414,10 @@ class ResAxialAttentionUNet(nn.Module):
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(imgchan, self.inplanes, kernel_size=7, stride=2, padding=3,
+        self.conv1 = nn.Conv3d(imgchan, self.inplanes, kernel_size=7, stride=2, padding=3,
                                bias=False)
-        self.conv2 = nn.Conv2d(self.inplanes, 128, kernel_size=3, stride=1, padding=1, bias=False)
-        self.conv3 = nn.Conv2d(128, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv2 = nn.Conv3d(self.inplanes, 128, kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv3 = nn.Conv3d(128, self.inplanes, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = norm_layer(self.inplanes)
         self.bn2 = norm_layer(128)
         self.bn3 = norm_layer(self.inplanes)
@@ -431,12 +432,12 @@ class ResAxialAttentionUNet(nn.Module):
                                        dilate=replace_stride_with_dilation[2])
         
         # Decoder
-        self.decoder1 = nn.Conv2d(int(1024 *2*s)      ,        int(1024*2*s), kernel_size=3, stride=2, padding=1)
-        self.decoder2 = nn.Conv2d(int(1024  *2*s)     , int(1024*s), kernel_size=3, stride=1, padding=1)
-        self.decoder3 = nn.Conv2d(int(1024*s),  int(512*s), kernel_size=3, stride=1, padding=1)
-        self.decoder4 = nn.Conv2d(int(512*s) ,  int(256*s), kernel_size=3, stride=1, padding=1)
-        self.decoder5 = nn.Conv2d(int(256*s) , int(128*s) , kernel_size=3, stride=1, padding=1)
-        self.adjust   = nn.Conv2d(int(128*s) , num_classes, kernel_size=1, stride=1, padding=0)
+        self.decoder1 = nn.Conv3d(int(1024 *2*s)      ,        int(1024*2*s), kernel_size=3, stride=2, padding=1)
+        self.decoder2 = nn.Conv3d(int(1024  *2*s)     , int(1024*s), kernel_size=3, stride=1, padding=1)
+        self.decoder3 = nn.Conv3d(int(1024*s),  int(512*s), kernel_size=3, stride=1, padding=1)
+        self.decoder4 = nn.Conv3d(int(512*s) ,  int(256*s), kernel_size=3, stride=1, padding=1)
+        self.decoder5 = nn.Conv3d(int(256*s) , int(128*s) , kernel_size=3, stride=1, padding=1)
+        self.adjust   = nn.Conv3d(int(128*s) , num_classes, kernel_size=1, stride=1, padding=0)
         self.soft     = nn.Softmax(dim=1)
 
 
@@ -449,7 +450,7 @@ class ResAxialAttentionUNet(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
+                conv1x1x1(self.inplanes, planes * block.expansion, stride),
                 norm_layer(planes * block.expansion),
             )
 
@@ -490,15 +491,15 @@ class ResAxialAttentionUNet(nn.Module):
         # print(x3.shape)
         x4 = self.layer4(x3)
 
-        x = F.relu(F.interpolate(self.decoder1(x4), scale_factor=(2,2), mode ='bilinear'))
+        x = F.relu(F.interpolate(self.decoder1(x4), scale_factor=(2,2), mode ='trilinear'))
         x = torch.add(x, x4)
-        x = F.relu(F.interpolate(self.decoder2(x) , scale_factor=(2,2), mode ='bilinear'))
+        x = F.relu(F.interpolate(self.decoder2(x) , scale_factor=(2,2), mode ='trilinear'))
         x = torch.add(x, x3)
-        x = F.relu(F.interpolate(self.decoder3(x) , scale_factor=(2,2), mode ='bilinear'))
+        x = F.relu(F.interpolate(self.decoder3(x) , scale_factor=(2,2), mode ='trilinear'))
         x = torch.add(x, x2)
-        x = F.relu(F.interpolate(self.decoder4(x) , scale_factor=(2,2), mode ='bilinear'))
+        x = F.relu(F.interpolate(self.decoder4(x) , scale_factor=(2,2), mode ='trilinear'))
         x = torch.add(x, x1)
-        x = F.relu(F.interpolate(self.decoder5(x) , scale_factor=(2,2), mode ='bilinear'))
+        x = F.relu(F.interpolate(self.decoder5(x) , scale_factor=(2,2), mode ='trilinear'))
         x = self.adjust(F.relu(x))
         # pdb.set_trace()
         return x
@@ -598,7 +599,7 @@ class medt_net(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
+                conv1x1x1(self.inplanes, planes * block.expansion, stride),
                 norm_layer(planes * block.expansion),
             )
 
@@ -641,22 +642,22 @@ class medt_net(nn.Module):
         # # print(x3.shape)
         # x4 = self.layer4(x3)
         # # print(x4.shape)
-        # x = F.relu(F.interpolate(self.decoder1(x4), scale_factor=(2,2), mode ='bilinear'))
+        # x = F.relu(F.interpolate(self.decoder1(x4), scale_factor=(2,2), mode ='trilinear'))
         # x = torch.add(x, x4)
-        # x = F.relu(F.interpolate(self.decoder2(x4) , scale_factor=(2,2), mode ='bilinear'))
+        # x = F.relu(F.interpolate(self.decoder2(x4) , scale_factor=(2,2), mode ='trilinear'))
         # x = torch.add(x, x3)
-        # x = F.relu(F.interpolate(self.decoder3(x3) , scale_factor=(2,2), mode ='bilinear'))
+        # x = F.relu(F.interpolate(self.decoder3(x3) , scale_factor=(2,2), mode ='trilinear'))
         # x = torch.add(x, x2)
-        x = F.relu(F.interpolate(self.decoder4(x2) , scale_factor=(2,2), mode ='bilinear'))
+        x = F.relu(F.interpolate(self.decoder4(x2) , scale_factor=(2,2), mode ='trilinear'))
         x = torch.add(x, x1)
-        x = F.relu(F.interpolate(self.decoder5(x) , scale_factor=(2,2), mode ='bilinear'))
+        x = F.relu(F.interpolate(self.decoder5(x) , scale_factor=(2,2), mode ='trilinear'))
         # print(x.shape)
         
         # end of full image training 
 
         # y_out = torch.ones((1,2,128,128))
         x_loc = x.clone()
-        # x = F.relu(F.interpolate(self.decoder5(x) , scale_factor=(2,2), mode ='bilinear'))
+        # x = F.relu(F.interpolate(self.decoder5(x) , scale_factor=(2,2), mode ='trilinear'))
         #start 
         for i in range(0,4):
             for j in range(0,4):
@@ -687,15 +688,15 @@ class medt_net(nn.Module):
                 # # print(x3.shape)
                 x4_p = self.layer4_p(x3_p)
                 
-                x_p = F.relu(F.interpolate(self.decoder1_p(x4_p), scale_factor=(2,2), mode ='bilinear'))
+                x_p = F.relu(F.interpolate(self.decoder1_p(x4_p), scale_factor=(2,2), mode ='trilinear'))
                 x_p = torch.add(x_p, x4_p)
-                x_p = F.relu(F.interpolate(self.decoder2_p(x_p) , scale_factor=(2,2), mode ='bilinear'))
+                x_p = F.relu(F.interpolate(self.decoder2_p(x_p) , scale_factor=(2,2), mode ='trilinear'))
                 x_p = torch.add(x_p, x3_p)
-                x_p = F.relu(F.interpolate(self.decoder3_p(x_p) , scale_factor=(2,2), mode ='bilinear'))
+                x_p = F.relu(F.interpolate(self.decoder3_p(x_p) , scale_factor=(2,2), mode ='trilinear'))
                 x_p = torch.add(x_p, x2_p)
-                x_p = F.relu(F.interpolate(self.decoder4_p(x_p) , scale_factor=(2,2), mode ='bilinear'))
+                x_p = F.relu(F.interpolate(self.decoder4_p(x_p) , scale_factor=(2,2), mode ='trilinear'))
                 x_p = torch.add(x_p, x1_p)
-                x_p = F.relu(F.interpolate(self.decoder5_p(x_p) , scale_factor=(2,2), mode ='bilinear'))
+                x_p = F.relu(F.interpolate(self.decoder5_p(x_p) , scale_factor=(2,2), mode ='trilinear'))
                 
                 x_loc[:,:,32*i:32*(i+1),32*j:32*(j+1)] = x_p
 
