@@ -55,18 +55,18 @@ class AxialAttention(nn.Module):
         # pdb.set_trace()
         # N C L H W
         if self.width==0:   #length
-            x = x.permute(0, 2, 1, 3 ,4)  # N, L, C, H ,W
+            x = x.permute(0, 2, 3, 1 ,4)  # N, L, H ,C, W
         elif self.width==1:  #height
-            x = x.permute(0, 3, 1, 2 ,4)  # N, H, C, L, W
+            x = x.permute(0, 3, 4, 1 ,2)  # N, H, W, C, L
         else:  #width
-            x = x.permute(0, 4, 1, 2 ,3)  # N, W, C, L, H
+            x = x.permute(0, 4, 2, 1 ,3)  # N, W, L, C, H
 
-        N, W, C, L, H = x.shape
-        x = x.contiguous().view(N * W, C, L, H)
+        N, W,  L, C, H = x.shape
+        x = x.contiguous().view(N * W* L , C, H)
 
         # Transformations
         qkv = self.bn_qkv(self.qkv_transform(x))
-        q, k, v = torch.split(qkv.reshape(N * W, self.groups, self.group_planes * 2 ,L ,H), [self.group_planes // 2, self.group_planes // 2, self.group_planes], dim=2)
+        q, k, v = torch.split(qkv.reshape(N * W*L, self.groups, self.group_planes * 2 ,H), [self.group_planes // 2, self.group_planes // 2, self.group_planes], dim=2)
 
         # Calculate position embedding
         all_embeddings = torch.index_select(self.relative, 1, self.flatten_index).view(self.group_planes * 2, self.kernel_size, self.kernel_size)
@@ -78,19 +78,21 @@ class AxialAttention(nn.Module):
         qk = torch.einsum('bgci, bgcj->bgij', q, k)
         
         stacked_similarity = torch.cat([qk, qr, kr], dim=1)
-        stacked_similarity = self.bn_similarity(stacked_similarity).view(N * W, 3, self.groups, H, H).sum(dim=1)
+        stacked_similarity = self.bn_similarity(stacked_similarity).view(N * W*L, 3, self.groups, H, H).sum(dim=1)
         #stacked_similarity = self.bn_qr(qr) + self.bn_kr(kr) + self.bn_qk(qk)
         # (N, groups, H, H, W)
         similarity = F.softmax(stacked_similarity, dim=3)
         sv = torch.einsum('bgij,bgcj->bgci', similarity, v)
         sve = torch.einsum('bgij,cij->bgci', similarity, v_embedding)
         stacked_output = torch.cat([sv, sve], dim=-1).view(N * W, self.out_planes * 2, H)
-        output = self.bn_output(stacked_output).view(N, W, self.out_planes, 2, H).sum(dim=-2)
+        output = self.bn_output(stacked_output).view(N, W,L, self.out_planes, 2, H).sum(dim=-2)
 
-        if self.width:
-            output = output.permute(0, 2, 1, 3)
-        else:
-            output = output.permute(0, 2, 3, 1)
+        if self.width == 0:  # length
+            output = output.permute(0, 3, 1, 2, 4)  # N, L, H ,C, W
+        elif self.width == 1:  # height
+            output = output.permute(0, 3, 4, 1, 2)  # N, H, W, C, L
+        else:  # width
+            output = output.permute(0, 3, 2, 4, 1)  # N, W, L, C, H
 
         if self.stride > 1:
             output = self.pooling(output)
@@ -292,6 +294,7 @@ class AxialBlock(nn.Module):
         out = self.bn1(out)
         out = self.relu(out)
         # print(out.shape)
+        out =  self.length_block(out)
         out = self.hight_block(out)
         out = self.width_block(out)
         out = self.relu(out)
