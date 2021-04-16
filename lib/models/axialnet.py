@@ -19,24 +19,25 @@ def conv1x1x1(in_planes, out_planes, stride=1):
 
 class AxialAttention(nn.Module):
     def __init__(self, in_planes, out_planes, groups=8, kernel_size=56,
-                 stride=1, bias=False, width=False):
+                 stride=1, bias=False, width=0):
+        #in_planes = width =64
+        #out_planes = width = 64
+        #groups = 8
         assert (in_planes % groups == 0) and (out_planes % groups == 0)
         super(AxialAttention, self).__init__()
-        self.in_planes = in_planes
-        self.out_planes = out_planes
-        self.groups = groups
-        self.group_planes = out_planes // groups
+        self.in_planes = in_planes      #planes
+        self.out_planes = out_planes     #planes
+        self.groups = groups    #8
+        self.group_planes = out_planes // groups   #8
         self.kernel_size = kernel_size
         self.stride = stride
         self.bias = bias
         self.width = width
 
         # Multi-head self attention
-        self.qkv_transform = qkv_transform(in_planes, out_planes * 2, kernel_size=1, stride=1,
-                                           padding=0, bias=False)
+        self.qkv_transform = qkv_transform(in_planes, out_planes * 2, kernel_size=1, stride=1,padding=0, bias=False)
         self.bn_qkv = nn.BatchNorm1d(out_planes * 2)
         self.bn_similarity = nn.BatchNorm2d(groups * 3)
-
         self.bn_output = nn.BatchNorm1d(out_planes * 2)
 
         # Position embedding
@@ -52,16 +53,20 @@ class AxialAttention(nn.Module):
 
     def forward(self, x):
         # pdb.set_trace()
-        if self.width:
-            x = x.permute(0, 2, 1, 3)
-        else:
-            x = x.permute(0, 3, 1, 2)  # N, W, C, H
-        N, W, C, H = x.shape
-        x = x.contiguous().view(N * W, C, H)
+        # N C L H W
+        if self.width==0:   #length
+            x = x.permute(0, 2, 1, 3 ,4)  # N, L, C, H ,W
+        elif self.width==1:  #height
+            x = x.permute(0, 3, 1, 2 ,4)  # N, H, C, L, W
+        else:  #width
+            x = x.permute(0, 4, 1, 2 ,3)  # N, W, C, L, H
+
+        N, W, C, L, H = x.shape
+        x = x.contiguous().view(N * W, C, L, H)
 
         # Transformations
         qkv = self.bn_qkv(self.qkv_transform(x))
-        q, k, v = torch.split(qkv.reshape(N * W, self.groups, self.group_planes * 2, H), [self.group_planes // 2, self.group_planes // 2, self.group_planes], dim=2)
+        q, k, v = torch.split(qkv.reshape(N * W, self.groups, self.group_planes * 2 ,L ,H), [self.group_planes // 2, self.group_planes // 2, self.group_planes], dim=2)
 
         # Calculate position embedding
         all_embeddings = torch.index_select(self.relative, 1, self.flatten_index).view(self.group_planes * 2, self.kernel_size, self.kernel_size)
@@ -262,18 +267,18 @@ class AxialAttention_wopos(nn.Module):
 
 class AxialBlock(nn.Module):
     expansion = 2
-
-    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
+    def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,#8
                  base_width=64, dilation=1, norm_layer=None, kernel_size=56):
         super(AxialBlock, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm3d
-        width = int(planes * (base_width / 64.))
+        width = int(planes * (base_width / 64.))   #width = planes
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
         self.conv_down = conv1x1x1(inplanes, width)
         self.bn1 = norm_layer(width)
-        self.hight_block = AxialAttention(width, width, groups=groups, kernel_size=kernel_size)
-        self.width_block = AxialAttention(width, width, groups=groups, kernel_size=kernel_size, stride=stride, width=True)
+        self.length_block = AxialAttention(width, width, groups=groups, kernel_size=kernel_size,width=0)
+        self.hight_block = AxialAttention(width, width, groups=groups, kernel_size=kernel_size,width=1)
+        self.width_block = AxialAttention(width, width, groups=groups, kernel_size=kernel_size, stride=stride, width=2)
         self.conv_up = conv1x1x1(width, planes * self.expansion)
         self.bn2 = norm_layer(planes * self.expansion)
         self.relu = nn.ReLU(inplace=True)
@@ -432,12 +437,12 @@ class ResAxialAttentionUNet(nn.Module):
                                        dilate=replace_stride_with_dilation[2])
         
         # Decoder
-        self.decoder1 = nn.Conv3d(int(1024 *2*s)      ,        int(1024*2*s), kernel_size=3, stride=2, padding=1)
-        self.decoder2 = nn.Conv3d(int(1024  *2*s)     , int(1024*s), kernel_size=3, stride=1, padding=1)
-        self.decoder3 = nn.Conv3d(int(1024*s),  int(512*s), kernel_size=3, stride=1, padding=1)
-        self.decoder4 = nn.Conv3d(int(512*s) ,  int(256*s), kernel_size=3, stride=1, padding=1)
-        self.decoder5 = nn.Conv3d(int(256*s) , int(128*s) , kernel_size=3, stride=1, padding=1)
-        self.adjust   = nn.Conv3d(int(128*s) , num_classes, kernel_size=1, stride=1, padding=0)
+        self.decoder1 = nn.Conv3d(int(1024*2*s),int(1024*2*s), kernel_size=3, stride=2, padding=1)
+        self.decoder2 = nn.Conv3d(int(1024*2*s),int(1024*s), kernel_size=3, stride=1, padding=1)
+        self.decoder3 = nn.Conv3d(int(1024*s),int(512*s), kernel_size=3, stride=1, padding=1)
+        self.decoder4 = nn.Conv3d(int(512*s),int(256*s), kernel_size=3, stride=1, padding=1)
+        self.decoder5 = nn.Conv3d(int(256*s),int(128*s) , kernel_size=3, stride=1, padding=1)
+        self.adjust   = nn.Conv3d(int(128*s),num_classes, kernel_size=1, stride=1, padding=0)
         self.soft     = nn.Softmax(dim=1)
 
 
@@ -491,15 +496,15 @@ class ResAxialAttentionUNet(nn.Module):
         # print(x3.shape)
         x4 = self.layer4(x3)
 
-        x = F.relu(F.interpolate(self.decoder1(x4), scale_factor=(2,2), mode ='trilinear'))
+        x = F.relu(F.interpolate(self.decoder1(x4), scale_factor=(2,2,2), mode ='trilinear'))
         x = torch.add(x, x4)
-        x = F.relu(F.interpolate(self.decoder2(x) , scale_factor=(2,2), mode ='trilinear'))
+        x = F.relu(F.interpolate(self.decoder2(x) , scale_factor=(2,2,2), mode ='trilinear'))
         x = torch.add(x, x3)
-        x = F.relu(F.interpolate(self.decoder3(x) , scale_factor=(2,2), mode ='trilinear'))
+        x = F.relu(F.interpolate(self.decoder3(x) , scale_factor=(2,2,2), mode ='trilinear'))
         x = torch.add(x, x2)
-        x = F.relu(F.interpolate(self.decoder4(x) , scale_factor=(2,2), mode ='trilinear'))
+        x = F.relu(F.interpolate(self.decoder4(x) , scale_factor=(2,2,2), mode ='trilinear'))
         x = torch.add(x, x1)
-        x = F.relu(F.interpolate(self.decoder5(x) , scale_factor=(2,2), mode ='trilinear'))
+        x = F.relu(F.interpolate(self.decoder5(x) , scale_factor=(2,2,2), mode ='trilinear'))
         x = self.adjust(F.relu(x))
         # pdb.set_trace()
         return x
